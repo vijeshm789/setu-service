@@ -116,7 +116,7 @@ export const updateKYCStatus = asyncHandler(async (req: AuthRequest, res: Respon
   const kyc = await kycService.getKYCById(kycId, userId);
 
   // Update status from SETU
-  const updatedKYC = await kycService.updateKYCStatus(kyc.setuRequestId);
+  const updatedKYC = await kycService.updateKYCStatus(kyc.setuRequestId, userId);
 
   const response: ApiResponse = {
     success: true,
@@ -166,19 +166,14 @@ export const handleWebhook = asyncHandler(async (req: Request, res: Response) =>
   const signature = req.headers['x-setu-signature'] as string;
   const payload = req.body;
 
-  // Verify webhook signature
-  const { setuService } = require('../services/setuService');
-  const isValid = setuService.verifyWebhookSignature(
-    JSON.stringify(payload),
-    signature
-  );
-
-  if (!isValid) {
-    throw new ApiError(401, 'Invalid webhook signature');
+  if (!signature) {
+    throw new ApiError(401, 'Missing webhook signature');
   }
 
-  // Process webhook
-  await kycService.handleWebhook(payload);
+  // Extract webhook secret from payload and verify
+  // Note: The webhook secret will be verified inside kycService.handleWebhook
+  // after finding the associated user
+  await kycService.handleWebhook(payload, signature);
 
   res.status(200).json({
     success: true,

@@ -1,24 +1,17 @@
 import { Router } from 'express';
-import { register, login, getProfile } from '../controllers/authController';
+import { register, getProfile } from '../controllers/authController';
 import { validate } from '../middleware/validator';
-import { registerSchema, loginSchema } from '../validators/authValidator';
+import { registerSchema } from '../validators/authValidator';
 import { authenticate } from '../middleware/auth';
 
 const router = Router();
 
 /**
  * @route   POST /api/auth/register
- * @desc    Register a new user
+ * @desc    Register a new user with SETU credentials and get authentication token
  * @access  Public
  */
 router.post('/register', validate(registerSchema), register);
-
-/**
- * @route   POST /api/auth/login
- * @desc    Login user
- * @access  Public
- */
-router.post('/login', validate(loginSchema), login);
 
 /**
  * @route   GET /api/auth/profile

@@ -1,4 +1,5 @@
 import { KYCVerification, IKYCVerification } from '../models/KYCVerification';
+import { User } from '../models/User';
 import { setuService } from './setuService';
 import { DocumentType, KYCStatus, SetuWebhookPayload } from '../types';
 import { ApiError } from '../utils/ApiError';
@@ -18,8 +19,17 @@ export class KYCService {
         throw new ApiError(400, 'At least one document type must be requested');
       }
 
-      // Create DigiLocker request with SETU
-      const setuResponse = await setuService.createDigiLockerRequest(requestedDocuments);
+      // Get user with SETU credentials
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new ApiError(404, 'User not found');
+      }
+
+      // Create DigiLocker request with SETU using user's credentials
+      const setuResponse = await setuService.createDigiLockerRequest(
+        user.setuCredentials,
+        requestedDocuments
+      );
 
       // Create KYC verification record
       const kycVerification = await KYCVerification.create({
@@ -85,16 +95,28 @@ export class KYCService {
   /**
    * Update KYC status from SETU
    */
-  async updateKYCStatus(setuRequestId: string): Promise<IKYCVerification> {
+  async updateKYCStatus(setuRequestId: string, userId: string): Promise<IKYCVerification> {
     try {
-      const kycVerification = await KYCVerification.findOne({ setuRequestId });
+      const kycVerification = await KYCVerification.findOne({
+        setuRequestId,
+        userId
+      });
 
       if (!kycVerification) {
         throw new ApiError(404, 'KYC verification not found');
       }
 
-      // Fetch latest status from SETU
-      const setuData = await setuService.getDigiLockerRequest(setuRequestId);
+      // Get user with SETU credentials
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new ApiError(404, 'User not found');
+      }
+
+      // Fetch latest status from SETU using user's credentials
+      const setuData = await setuService.getDigiLockerRequest(
+        user.setuCredentials,
+        setuRequestId
+      );
 
       // Update KYC record
       kycVerification.status = this.mapSetuStatusToKYCStatus(setuData.status);
@@ -156,8 +178,15 @@ export class KYCService {
         return existingDoc;
       }
 
-      // Fetch from SETU
+      // Get user with SETU credentials
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new ApiError(404, 'User not found');
+      }
+
+      // Fetch from SETU using user's credentials
       const document = await setuService.fetchDocument(
+        user.setuCredentials,
         kycVerification.setuRequestId,
         documentType
       );
@@ -188,17 +217,34 @@ export class KYCService {
   /**
    * Handle webhook from SETU
    */
-  async handleWebhook(payload: SetuWebhookPayload): Promise<void> {
+  async handleWebhook(payload: SetuWebhookPayload, signature: string): Promise<void> {
     try {
       const kycVerification = await KYCVerification.findOne({
         setuRequestId: payload.id,
-      });
+      }).populate('userId');
 
       if (!kycVerification) {
         Logger.warn('KYC verification not found for webhook', {
           setuRequestId: payload.id,
         });
         return;
+      }
+
+      // Get user to verify webhook signature
+      const user = await User.findById(kycVerification.userId);
+      if (!user) {
+        throw new ApiError(404, 'User not found');
+      }
+
+      // Verify webhook signature using user's webhook secret
+      const isValid = setuService.verifyWebhookSignature(
+        user.setuCredentials,
+        JSON.stringify(payload),
+        signature
+      );
+
+      if (!isValid) {
+        throw new ApiError(401, 'Invalid webhook signature');
       }
 
       // Update status

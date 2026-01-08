@@ -4,10 +4,11 @@ A comprehensive KYC (Know Your Customer) verification service built with Node.js
 
 ## Features
 
-- 🔐 **User Authentication**: JWT-based authentication with secure password hashing
-- 📄 **KYC Verification**: Complete KYC flow using SETU DigiLocker API
+- 🔐 **User Authentication**: JWT-based authentication with secure password hashing and token generation on registration
+- 👤 **Multi-tenant Support**: Each user has their own SETU credentials stored securely
+- 📄 **KYC Verification**: Complete KYC flow using SETU DigiLocker API with user-specific credentials
 - 🗂️ **Document Management**: Fetch and store multiple document types (Aadhaar, PAN, DL, etc.)
-- 🔔 **Webhook Support**: Real-time updates via SETU webhooks
+- 🔔 **Webhook Support**: Real-time updates via SETU webhooks with signature verification
 - 🛡️ **Security**: Rate limiting, helmet protection, and CORS support
 - ✅ **Validation**: Request validation using Joi
 - 📊 **Status Tracking**: Track KYC verification status in real-time
@@ -70,14 +71,12 @@ MONGODB_URI=mongodb://localhost:27017/setu-kyc-service
 JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
 JWT_EXPIRES_IN=7d
 
-# SETU DigiLocker Configuration
-SETU_BASE_URL=https://dg-sandbox.setu.co
-SETU_CLIENT_ID=your-setu-client-id
-SETU_CLIENT_SECRET=your-setu-client-secret
-SETU_PRODUCT_INSTANCE_ID=your-product-instance-id
-SETU_REDIRECT_URL=http://localhost:3000/api/kyc/callback
-SETU_WEBHOOK_SECRET=your-webhook-secret
+# API Configuration
+API_RATE_LIMIT_WINDOW_MS=900000
+API_RATE_LIMIT_MAX_REQUESTS=100
 ```
+
+**Note**: SETU credentials are now provided during user registration and stored per user in the database.
 
 4. **Build the project**
 ```bash
@@ -105,7 +104,7 @@ http://localhost:3000/api
 
 ### Authentication Endpoints
 
-#### 1. Register User
+#### 1. Register User (Get Token)
 ```http
 POST /api/auth/register
 Content-Type: application/json
@@ -114,7 +113,15 @@ Content-Type: application/json
   "email": "user@example.com",
   "password": "password123",
   "name": "John Doe",
-  "phoneNumber": "9876543210"
+  "phoneNumber": "9876543210",
+  "setuCredentials": {
+    "clientId": "your-setu-client-id",
+    "clientSecret": "your-setu-client-secret",
+    "productInstanceId": "your-product-instance-id",
+    "webhookSecret": "your-webhook-secret",
+    "baseUrl": "https://dg-sandbox.setu.co",
+    "redirectUrl": "https://yourapp.com/kyc/callback"
+  }
 }
 ```
 
@@ -122,7 +129,7 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "message": "User registered successfully",
+  "message": "User registered successfully. Use the token for authentication.",
   "data": {
     "user": {
       "id": "...",
@@ -136,34 +143,9 @@ Content-Type: application/json
 }
 ```
 
-#### 2. Login
-```http
-POST /api/auth/login
-Content-Type: application/json
+**Important**: Save the `token` from the response. You'll need to pass this token in the `Authorization` header for all subsequent API requests.
 
-{
-  "email": "user@example.com",
-  "password": "password123"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Login successful",
-  "data": {
-    "user": {
-      "id": "...",
-      "email": "user@example.com",
-      "name": "John Doe"
-    },
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-  }
-}
-```
-
-#### 3. Get Profile
+#### 2. Get Profile
 ```http
 GET /api/auth/profile
 Authorization: Bearer <token>
@@ -355,13 +337,14 @@ This endpoint is called by SETU when the KYC status changes.
 
 ## KYC Flow
 
-1. **User Registration/Login**: User creates an account or logs in
-2. **Initiate KYC**: User initiates KYC with required document types
-3. **DigiLocker Authentication**: User is redirected to SETU DigiLocker URL
-4. **Document Consent**: User authenticates with DigiLocker and grants consent
-5. **Webhook Notification**: SETU sends webhook when documents are fetched
-6. **Document Retrieval**: Documents are automatically stored in the database
-7. **Status Check**: User can check KYC status and view documents
+1. **User Registration**: User creates an account with their SETU credentials and receives an authentication token
+2. **Token Storage**: Save the token to use in all subsequent API requests
+3. **Initiate KYC**: User initiates KYC with required document types (using the token in Authorization header)
+4. **DigiLocker Authentication**: User is redirected to SETU DigiLocker URL (specific to their SETU credentials)
+5. **Document Consent**: User authenticates with DigiLocker and grants consent
+6. **Webhook Notification**: SETU sends webhook when documents are fetched (verified using user's webhook secret)
+7. **Document Retrieval**: Documents are automatically stored in the database
+8. **Status Check**: User can check KYC status and view documents using their token
 
 ## Error Handling
 

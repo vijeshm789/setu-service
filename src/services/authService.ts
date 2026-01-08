@@ -1,17 +1,18 @@
 import jwt from 'jsonwebtoken';
-import { User, IUser } from '../models/User';
+import { User, IUser, ISetuCredentials } from '../models/User';
 import { config } from '../config/environment';
 import { ApiError } from '../utils/ApiError';
 import { Logger } from '../utils/logger';
 
 export class AuthService {
   /**
-   * Register a new user
+   * Register a new user with SETU credentials
    */
   async register(
     email: string,
     password: string,
     name: string,
+    setuCredentials: ISetuCredentials,
     phoneNumber?: string
   ): Promise<{ user: IUser; token: string }> {
     try {
@@ -21,12 +22,13 @@ export class AuthService {
         throw new ApiError(409, 'User with this email already exists');
       }
 
-      // Create new user
+      // Create new user with SETU credentials
       const user = await User.create({
         email,
         password,
         name,
         phoneNumber,
+        setuCredentials,
       });
 
       Logger.info('User registered successfully', { userId: user._id, email });
@@ -37,35 +39,6 @@ export class AuthService {
       return { user, token };
     } catch (error: any) {
       Logger.error('User registration failed', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Login user
-   */
-  async login(email: string, password: string): Promise<{ user: IUser; token: string }> {
-    try {
-      // Find user
-      const user = await User.findOne({ email });
-      if (!user) {
-        throw new ApiError(401, 'Invalid email or password');
-      }
-
-      // Verify password
-      const isPasswordValid = await user.comparePassword(password);
-      if (!isPasswordValid) {
-        throw new ApiError(401, 'Invalid email or password');
-      }
-
-      Logger.info('User logged in successfully', { userId: user._id, email });
-
-      // Generate token
-      const token = this.generateToken(user);
-
-      return { user, token };
-    } catch (error: any) {
-      Logger.error('User login failed', error);
       throw error;
     }
   }

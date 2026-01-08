@@ -1,7 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
-import { config } from '../config/environment';
 import { ApiError } from '../utils/ApiError';
 import { Logger } from '../utils/logger';
+import { ISetuCredentials } from '../models/User';
 import {
   SetuTokenResponse,
   SetuCreateRequestResponse,
@@ -9,14 +9,27 @@ import {
   DocumentType,
 } from '../types';
 
-export class SetuService {
-  private axiosInstance: AxiosInstance;
-  private accessToken: string | null = null;
-  private tokenExpiresAt: number = 0;
+interface TokenCache {
+  accessToken: string;
+  expiresAt: number;
+}
 
-  constructor() {
-    this.axiosInstance = axios.create({
-      baseURL: config.setu.baseUrl,
+export class SetuService {
+  private tokenCache: Map<string, TokenCache> = new Map();
+
+  /**
+   * Get cache key for user credentials
+   */
+  private getCacheKey(credentials: ISetuCredentials): string {
+    return `${credentials.clientId}:${credentials.productInstanceId}`;
+  }
+
+  /**
+   * Create axios instance for SETU API
+   */
+  private createAxiosInstance(baseUrl: string): AxiosInstance {
+    const axiosInstance = axios.create({
+      baseURL: baseUrl,
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
@@ -24,7 +37,7 @@ export class SetuService {
     });
 
     // Request interceptor for logging
-    this.axiosInstance.interceptors.request.use(
+    axiosInstance.interceptors.request.use(
       (config) => {
         Logger.debug('SETU API Request', {
           url: config.url,
@@ -40,7 +53,7 @@ export class SetuService {
     );
 
     // Response interceptor for logging
-    this.axiosInstance.interceptors.response.use(
+    axiosInstance.interceptors.response.use(
       (response) => {
         Logger.debug('SETU API Response', {
           url: response.config.url,
@@ -58,34 +71,45 @@ export class SetuService {
         return Promise.reject(error);
       }
     );
+
+    return axiosInstance;
   }
 
   /**
    * Get OAuth2 access token from SETU
    */
-  private async getAccessToken(): Promise<string> {
+  private async getAccessToken(credentials: ISetuCredentials): Promise<string> {
     try {
+      const cacheKey = this.getCacheKey(credentials);
+      const cached = this.tokenCache.get(cacheKey);
+
       // Return cached token if still valid
-      if (this.accessToken && Date.now() < this.tokenExpiresAt) {
-        return this.accessToken;
+      if (cached && Date.now() < cached.expiresAt) {
+        return cached.accessToken;
       }
 
-      Logger.info('Fetching new SETU access token');
+      Logger.info('Fetching new SETU access token', { clientId: credentials.clientId });
 
-      const response = await this.axiosInstance.post<SetuTokenResponse>(
+      const baseUrl = credentials.baseUrl || 'https://dg-sandbox.setu.co';
+      const axiosInstance = this.createAxiosInstance(baseUrl);
+
+      const response = await axiosInstance.post<SetuTokenResponse>(
         '/api/v2/auth/token',
         {
-          clientID: config.setu.clientId,
-          secret: config.setu.clientSecret,
+          clientID: credentials.clientId,
+          secret: credentials.clientSecret,
         }
       );
 
-      this.accessToken = response.data.access_token;
+      const accessToken = response.data.access_token;
       // Set expiry with 5 minute buffer
-      this.tokenExpiresAt = Date.now() + (response.data.expires_in - 300) * 1000;
+      const expiresAt = Date.now() + (response.data.expires_in - 300) * 1000;
+
+      // Cache the token
+      this.tokenCache.set(cacheKey, { accessToken, expiresAt });
 
       Logger.info('SETU access token obtained successfully');
-      return this.accessToken;
+      return accessToken;
     } catch (error: any) {
       Logger.error('Failed to get SETU access token', error);
       throw new ApiError(
@@ -99,11 +123,13 @@ export class SetuService {
    * Create a DigiLocker request
    */
   async createDigiLockerRequest(
-    requestedDocuments: DocumentType[],
-    redirectUrl?: string
+    credentials: ISetuCredentials,
+    requestedDocuments: DocumentType[]
   ): Promise<SetuCreateRequestResponse> {
     try {
-      const token = await this.getAccessToken();
+      const token = await this.getAccessToken(credentials);
+      const baseUrl = credentials.baseUrl || 'https://dg-sandbox.setu.co';
+      const axiosInstance = this.createAxiosInstance(baseUrl);
 
       // Map document types to SETU format
       const documents = requestedDocuments.map((docType) => ({
@@ -111,14 +137,14 @@ export class SetuService {
       }));
 
       const requestBody = {
-        redirectUrl: redirectUrl || config.setu.redirectUrl,
+        redirectUrl: credentials.redirectUrl,
         documents,
       };
 
       Logger.info('Creating DigiLocker request', { documents });
 
-      const response = await this.axiosInstance.post(
-        `/api/v2/digilocker/${config.setu.productInstanceId}/requests`,
+      const response = await axiosInstance.post(
+        `/api/v2/digilocker/${credentials.productInstanceId}/requests`,
         requestBody,
         {
           headers: {
@@ -146,7 +172,10 @@ export class SetuService {
   /**
    * Get DigiLocker request status and documents
    */
-  async getDigiLockerRequest(requestId: string): Promise<{
+  async getDigiLockerRequest(
+    credentials: ISetuCredentials,
+    requestId: string
+  ): Promise<{
     id: string;
     status: string;
     documents?: SetuDocumentData[];
@@ -157,12 +186,14 @@ export class SetuService {
     };
   }> {
     try {
-      const token = await this.getAccessToken();
+      const token = await this.getAccessToken(credentials);
+      const baseUrl = credentials.baseUrl || 'https://dg-sandbox.setu.co';
+      const axiosInstance = this.createAxiosInstance(baseUrl);
 
       Logger.info('Fetching DigiLocker request status', { requestId });
 
-      const response = await this.axiosInstance.get(
-        `/api/v2/digilocker/${config.setu.productInstanceId}/requests/${requestId}`,
+      const response = await axiosInstance.get(
+        `/api/v2/digilocker/${credentials.productInstanceId}/requests/${requestId}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -190,9 +221,13 @@ export class SetuService {
   /**
    * Fetch specific document from DigiLocker request
    */
-  async fetchDocument(requestId: string, documentType: DocumentType): Promise<SetuDocumentData | null> {
+  async fetchDocument(
+    credentials: ISetuCredentials,
+    requestId: string,
+    documentType: DocumentType
+  ): Promise<SetuDocumentData | null> {
     try {
-      const requestData = await this.getDigiLockerRequest(requestId);
+      const requestData = await this.getDigiLockerRequest(credentials, requestId);
 
       if (!requestData.documents || requestData.documents.length === 0) {
         Logger.warn('No documents found in request', { requestId });
@@ -219,9 +254,12 @@ export class SetuService {
   /**
    * Fetch all documents from DigiLocker request
    */
-  async fetchAllDocuments(requestId: string): Promise<SetuDocumentData[]> {
+  async fetchAllDocuments(
+    credentials: ISetuCredentials,
+    requestId: string
+  ): Promise<SetuDocumentData[]> {
     try {
-      const requestData = await this.getDigiLockerRequest(requestId);
+      const requestData = await this.getDigiLockerRequest(credentials, requestId);
 
       if (!requestData.documents || requestData.documents.length === 0) {
         Logger.warn('No documents found in request', { requestId });
@@ -243,11 +281,15 @@ export class SetuService {
   /**
    * Verify webhook signature
    */
-  verifyWebhookSignature(payload: string, signature: string): boolean {
+  verifyWebhookSignature(
+    credentials: ISetuCredentials,
+    payload: string,
+    signature: string
+  ): boolean {
     try {
       const crypto = require('crypto');
       const expectedSignature = crypto
-        .createHmac('sha256', config.setu.webhookSecret)
+        .createHmac('sha256', credentials.webhookSecret)
         .update(payload)
         .digest('hex');
 

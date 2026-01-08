@@ -1,11 +1,21 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcryptjs';
 
+export interface ISetuCredentials {
+  clientId: string;
+  clientSecret: string;
+  productInstanceId: string;
+  webhookSecret: string;
+  baseUrl?: string;
+  redirectUrl: string;
+}
+
 export interface IUser extends Document {
   email: string;
   password: string;
   name: string;
   phoneNumber?: string;
+  setuCredentials: ISetuCredentials;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -34,6 +44,32 @@ const userSchema = new Schema<IUser>(
     phoneNumber: {
       type: String,
       trim: true,
+    },
+    setuCredentials: {
+      clientId: {
+        type: String,
+        required: true,
+      },
+      clientSecret: {
+        type: String,
+        required: true,
+      },
+      productInstanceId: {
+        type: String,
+        required: true,
+      },
+      webhookSecret: {
+        type: String,
+        required: true,
+      },
+      baseUrl: {
+        type: String,
+        default: 'https://dg-sandbox.setu.co',
+      },
+      redirectUrl: {
+        type: String,
+        required: true,
+      },
     },
   },
   {

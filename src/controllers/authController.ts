@@ -5,21 +5,22 @@ import { ApiResponse } from '../types';
 import { AuthRequest } from '../types';
 
 /**
- * Register a new user
+ * Register a new user with SETU credentials
  */
 export const register = asyncHandler(async (req: Request, res: Response) => {
-  const { email, password, name, phoneNumber } = req.body;
+  const { email, password, name, phoneNumber, setuCredentials } = req.body;
 
   const { user, token } = await authService.register(
     email,
     password,
     name,
+    setuCredentials,
     phoneNumber
   );
 
   const response: ApiResponse = {
     success: true,
-    message: 'User registered successfully',
+    message: 'User registered successfully. Use the token for authentication.',
     data: {
       user: {
         id: user._id,
@@ -33,31 +34,6 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   };
 
   res.status(201).json(response);
-});
-
-/**
- * Login user
- */
-export const login = asyncHandler(async (req: Request, res: Response) => {
-  const { email, password } = req.body;
-
-  const { user, token } = await authService.login(email, password);
-
-  const response: ApiResponse = {
-    success: true,
-    message: 'Login successful',
-    data: {
-      user: {
-        id: user._id,
-        email: user.email,
-        name: user.name,
-        phoneNumber: user.phoneNumber,
-      },
-      token,
-    },
-  };
-
-  res.status(200).json(response);
 });
 
 /**
